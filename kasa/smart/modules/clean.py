@@ -6,7 +6,7 @@ import base64
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from typing import Annotated, Literal
 
 from ...feature import Feature
@@ -14,6 +14,10 @@ from ...module import FeatureAttribute
 from ..smartmodule import SmartModule
 
 _LOGGER = logging.getLogger(__name__)
+
+# Only known value for start_type in setSwitchClean; required for
+# targeted cleaning modes (Room, Zone) but not for StandardHome.
+_START_TYPE_RESUME = 1
 
 
 class Status(IntEnum):
@@ -110,6 +114,21 @@ class ZoneInfo(CleanAreaSettings):
 
     #: List of ``[x, y]`` corner coordinates defining the zone rectangle.
     vertexs: list[list[int]] | None = None
+
+
+class AreaType(StrEnum):
+    """Type of area entry in map data."""
+
+    #: A named room.
+    Room = "room"
+    #: A user-defined rectangular cleaning zone.
+    Area = "area"
+    #: A virtual wall boundary.
+    VirtualWall = "virtual_wall"
+    #: A no-go zone.
+    Forbid = "forbid"
+    #: A detected carpet region.
+    CarpetRectangle = "carpet_rectangle"
 
 
 class AreaUnit(IntEnum):
@@ -502,7 +521,7 @@ class Clean(SmartModule):
                 "force_clean": False,
                 "map_id": map_id,
                 "room_list": list(room_ids),
-                "start_type": 1,
+                "start_type": _START_TYPE_RESUME,
             },
         )
 
@@ -529,11 +548,11 @@ class Clean(SmartModule):
                 "clean_order": True,
                 "force_clean": False,
                 "map_id": map_id,
-                "start_type": 1,
+                "start_type": _START_TYPE_RESUME,
                 "area_list": [
                     {
                         "id": 0,
-                        "type": "area",
+                        "type": AreaType.Area,
                         "vertexs": zone.vertexs,
                         "suction": zone.suction,
                         "cistern": zone.cistern,
@@ -557,7 +576,7 @@ class Clean(SmartModule):
 
         rooms: list[RoomInfo] = []
         for area in resp.get("area_list", []):
-            if area.get("type") != "room":
+            if area.get("type") != AreaType.Room:
                 continue
             name = None
             if raw_name := area.get("name"):

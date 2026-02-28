@@ -8,6 +8,7 @@ from pytest_mock import MockerFixture
 from kasa import Module
 from kasa.smart import SmartDevice
 from kasa.smart.modules.clean import (
+    AreaType,
     CleanMode,
     ErrorCode,
     RoomInfo,
@@ -335,7 +336,7 @@ async def test_clean_zones(dev: SmartDevice, mocker: MockerFixture):
             "area_list": [
                 {
                     "id": 0,
-                    "type": "area",
+                    "type": AreaType.Area,
                     "vertexs": zones[0].vertexs,
                     "suction": 2,
                     "cistern": 1,
@@ -343,7 +344,7 @@ async def test_clean_zones(dev: SmartDevice, mocker: MockerFixture):
                 },
                 {
                     "id": 0,
-                    "type": "area",
+                    "type": AreaType.Area,
                     "vertexs": zones[1].vertexs,
                     "suction": 1,
                     "cistern": 0,
