@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import logging
+from dataclasses import dataclass
 from datetime import timedelta
 from enum import IntEnum
 from typing import Annotated, Literal
@@ -56,6 +58,58 @@ class FanSpeed(IntEnum):
     Turbo = 3
     Max = 4
     Ultra = 5
+
+
+class CleanMode(IntEnum):
+    """Clean mode for ``setSwitchClean`` and ``getCleanStatus``.
+
+    Used as ``clean_mode`` in commands and ``clean_status`` in status responses.
+    """
+
+    #: Clean all rooms with uniform settings.
+    StandardHome = 0
+    #: Clean all rooms with per-room settings and custom order.
+    AdvancedHome = 1
+    #: Clean a small area around the vacuum's current position.
+    Spot = 2
+    #: Clean selected rooms only.
+    Room = 3
+    #: Clean user-defined rectangular areas.
+    Zone = 4
+    #: Run a saved custom cleaning preset.
+    Custom = 5
+
+
+@dataclass
+class CleanAreaSettings:
+    """Per-area cleaning settings shared by rooms and zones."""
+
+    #: Suction power level (matches :class:`FanSpeed` values).
+    suction: int = 0
+    #: Water level for mopping.
+    cistern: int = 0
+    #: Number of cleaning passes.
+    clean_number: int = 0
+
+
+@dataclass
+class RoomInfo(CleanAreaSettings):
+    """Information about a room on the vacuum's map."""
+
+    #: Room ID used in cleaning commands.
+    id: int = 0
+    #: Human-readable room name (base64-decoded from the device).
+    name: str | None = None
+    #: Color index used for map rendering.
+    color: int = 0
+
+
+@dataclass
+class ZoneInfo(CleanAreaSettings):
+    """A rectangular zone defined by corner coordinates for zone cleaning."""
+
+    #: List of ``[x, y]`` corner coordinates defining the zone rectangle.
+    vertexs: list[list[int]] | None = None
 
 
 class AreaUnit(IntEnum):
@@ -276,7 +330,7 @@ class Clean(SmartModule):
         return await self.call(
             "setSwitchClean",
             {
-                "clean_mode": 0,
+                "clean_mode": CleanMode.StandardHome,
                 "clean_on": True,
                 "clean_order": True,
                 "force_clean": False,
@@ -416,8 +470,21 @@ class Clean(SmartModule):
         """Return the ID of the currently active map."""
         return self.data["getMapInfo"]["current_map_id"]
 
-    async def clean_rooms(self, room_ids: list[int], map_id: int | None = None) -> dict:
+    @property
+    def clean_type(self) -> CleanMode | None:
+        """Return the active cleaning mode, or ``None`` if unavailable."""
+        cs = self.data.get("getCleanStatus")
+        if cs is None or "clean_status" not in cs:
+            return None
+        return CleanMode(cs["clean_status"])
+
+    async def clean_rooms(
+        self, room_ids: list[int], *, map_id: int | None = None
+    ) -> dict:
         """Start cleaning specific rooms.
+
+        Per-room settings are not supported; the device uses the global
+        suction / cistern / clean_number values for room cleaning.
 
         :param room_ids: List of room IDs to clean.
         :param map_id: Map ID to clean on. Defaults to the current active map.
@@ -429,7 +496,7 @@ class Clean(SmartModule):
         return await self.call(
             "setSwitchClean",
             {
-                "clean_mode": 3,
+                "clean_mode": CleanMode.Room,
                 "clean_on": True,
                 "clean_order": True,
                 "force_clean": False,
@@ -439,14 +506,73 @@ class Clean(SmartModule):
             },
         )
 
-    async def get_rooms(self, map_id: int | None = None) -> list[dict]:
+    async def clean_zones(
+        self,
+        zones: list[ZoneInfo],
+        *,
+        map_id: int | None = None,
+    ) -> dict:
+        """Start cleaning specific zones (rectangular areas on the map).
+
+        :param zones: List of :class:`ZoneInfo` rectangles to clean.
+        :param map_id: Map ID to clean on. Defaults to the current active map.
+        """
+        if not zones:
+            raise ValueError("zones must not be empty")
+        if map_id is None:
+            map_id = self.current_map_id
+        return await self.call(
+            "setSwitchClean",
+            {
+                "clean_mode": CleanMode.Zone,
+                "clean_on": True,
+                "clean_order": True,
+                "force_clean": False,
+                "map_id": map_id,
+                "start_type": 1,
+                "area_list": [
+                    {
+                        "id": 0,
+                        "type": "area",
+                        "vertexs": zone.vertexs,
+                        "suction": zone.suction,
+                        "cistern": zone.cistern,
+                        "clean_number": zone.clean_number,
+                    }
+                    for zone in zones
+                ],
+            },
+        )
+
+    async def get_rooms(self, map_id: int | None = None) -> list[RoomInfo]:
         """Return the list of rooms for the given map.
+
+        Room names are base64-decoded when present.
 
         :param map_id: Map ID to query. Defaults to the current active map.
         """
         if map_id is None:
             map_id = self.current_map_id
         resp = await self.call("getMapData", {"map_id": map_id, "type": 0})
-        return [
-            area for area in resp.get("area_list", []) if area.get("type") == "room"
-        ]
+
+        rooms: list[RoomInfo] = []
+        for area in resp.get("area_list", []):
+            if area.get("type") != "room":
+                continue
+            name = None
+            if raw_name := area.get("name"):
+                try:
+                    name = base64.b64decode(raw_name).decode()
+                except Exception:
+                    name = raw_name
+            rooms.append(
+                RoomInfo(
+                    id=area["id"],
+                    name=name,
+                    color=area.get("color", 0),
+                    suction=area.get("suction", 0),
+                    cistern=area.get("cistern", 0),
+                    clean_number=area.get("clean_number", 0),
+                )
+            )
+        return rooms
