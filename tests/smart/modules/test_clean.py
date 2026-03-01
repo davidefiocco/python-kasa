@@ -7,7 +7,14 @@ from pytest_mock import MockerFixture
 
 from kasa import Module
 from kasa.smart import SmartDevice
-from kasa.smart.modules.clean import CleanMode, ErrorCode, RoomInfo, Status
+from kasa.smart.modules.clean import (
+    AreaType,
+    CleanMode,
+    ErrorCode,
+    RoomInfo,
+    Status,
+    ZoneInfo,
+)
 
 from ...device_fixtures import get_parent_and_child_modules, parametrize
 
@@ -293,6 +300,68 @@ async def test_clean_rooms_empty_raises(dev: SmartDevice):
 
     with pytest.raises(ValueError, match="room_ids must not be empty"):
         await clean.clean_rooms([])
+
+
+@clean
+async def test_clean_zones(dev: SmartDevice, mocker: MockerFixture):
+    """Test clean_zones sends the correct setSwitchClean payload."""
+    clean = next(get_parent_and_child_modules(dev, Module.Clean))
+    call = mocker.spy(clean, "call")
+
+    zones = [
+        ZoneInfo(
+            vertexs=[[-691, -1650], [606, -1650], [606, -2163], [-691, -2163]],
+            suction=2,
+            cistern=1,
+            clean_number=1,
+        ),
+        ZoneInfo(
+            vertexs=[[-423, -1967], [141, -1967], [141, -2561], [-423, -2561]],
+            suction=1,
+            cistern=0,
+            clean_number=3,
+        ),
+    ]
+    await clean.clean_zones(zones)
+
+    call.assert_called_with(
+        "setSwitchClean",
+        {
+            "clean_mode": CleanMode.Zone,
+            "clean_on": True,
+            "clean_order": True,
+            "force_clean": False,
+            "map_id": clean.current_map_id,
+            "start_type": 1,
+            "area_list": [
+                {
+                    "id": 0,
+                    "type": AreaType.Area,
+                    "vertexs": zones[0].vertexs,
+                    "suction": 2,
+                    "cistern": 1,
+                    "clean_number": 1,
+                },
+                {
+                    "id": 0,
+                    "type": AreaType.Area,
+                    "vertexs": zones[1].vertexs,
+                    "suction": 1,
+                    "cistern": 0,
+                    "clean_number": 3,
+                },
+            ],
+        },
+    )
+
+
+@clean
+async def test_clean_zones_empty_raises(dev: SmartDevice):
+    """Test clean_zones raises ValueError when zones is empty."""
+    clean = next(get_parent_and_child_modules(dev, Module.Clean))
+
+    with pytest.raises(ValueError, match="zones must not be empty"):
+        await clean.clean_zones([])
 
 
 @clean

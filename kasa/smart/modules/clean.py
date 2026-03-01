@@ -16,7 +16,7 @@ from ..smartmodule import SmartModule
 _LOGGER = logging.getLogger(__name__)
 
 # Only known value for start_type in setSwitchClean; required for
-# targeted cleaning modes (Room) but not for StandardHome.
+# targeted cleaning modes (Room, Zone) but not for StandardHome.
 _START_TYPE_RESUME = 1
 
 
@@ -106,6 +106,14 @@ class RoomInfo(CleanAreaSettings):
     name: str | None = None
     #: Color index used for map rendering.
     color: int = 0
+
+
+@dataclass
+class ZoneInfo(CleanAreaSettings):
+    """A rectangular zone defined by corner coordinates for zone cleaning."""
+
+    #: List of ``[x, y]`` corner coordinates defining the zone rectangle.
+    vertexs: list[list[int]] | None = None
 
 
 class AreaType(StrEnum):
@@ -514,6 +522,44 @@ class Clean(SmartModule):
                 "map_id": map_id,
                 "room_list": list(room_ids),
                 "start_type": _START_TYPE_RESUME,
+            },
+        )
+
+    async def clean_zones(
+        self,
+        zones: list[ZoneInfo],
+        *,
+        map_id: int | None = None,
+    ) -> dict:
+        """Start cleaning specific zones (rectangular areas on the map).
+
+        :param zones: List of :class:`ZoneInfo` rectangles to clean.
+        :param map_id: Map ID to clean on. Defaults to the current active map.
+        """
+        if not zones:
+            raise ValueError("zones must not be empty")
+        if map_id is None:
+            map_id = self.current_map_id
+        return await self.call(
+            "setSwitchClean",
+            {
+                "clean_mode": CleanMode.Zone,
+                "clean_on": True,
+                "clean_order": True,
+                "force_clean": False,
+                "map_id": map_id,
+                "start_type": _START_TYPE_RESUME,
+                "area_list": [
+                    {
+                        "id": 0,
+                        "type": AreaType.Area,
+                        "vertexs": zone.vertexs,
+                        "suction": zone.suction,
+                        "cistern": zone.cistern,
+                        "clean_number": zone.clean_number,
+                    }
+                    for zone in zones
+                ],
             },
         )
 
